@@ -1,10 +1,14 @@
 using System;
+using System.IO;
 using System.Linq;
+using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using LiteNetLib;
 using LiteNetLib.Utils;
+using LiteNetLibTest.Media.Input;
+using LiteNetLibTest.Media.Output;
 
 namespace LiteNetLibTest;
 
@@ -12,22 +16,22 @@ public partial class MainWindow : Window
 {
     private const int Port = 12045;
     private const string ConnectionKey = "Test";
+    private readonly static object lo = new();
 
     private readonly EventBasedNetListener listener = new();
-    private readonly NetPacketProcessor netPacketProcessor = new();
     private NetManager? server;
     private NetManager? client;
     private DispatcherTimer? timer;
 
     private Control? controlUnderMoving;
     private Point controlStartMousePosition;
-    private readonly TimeSpan timerInterval = TimeSpan.FromMilliseconds(50);
+    private MemoryStream stream;
+    private readonly TimeSpan timerInterval = TimeSpan.FromMilliseconds(60);
 
     public MainWindow()
     {
         InitializeComponent();
         NetDebug.Logger = new ConsoleLogger();
-        netPacketProcessor.RegisterNestedType(() => new GameObject());
 
         this.Closed += OnClosed;
         this.AddHandler(PointerMovedEvent, (sender, args) =>
@@ -47,6 +51,7 @@ public partial class MainWindow : Window
         timer?.Stop();
         server?.Stop(true);
         client?.Stop(true);
+        stream?.Dispose();
     }
 
     public void InitializeAsServer()
@@ -67,8 +72,16 @@ public partial class MainWindow : Window
         };
 
         var writer = new NetDataWriter();
-        var objects = this.FindControl<Canvas>("Scene").Children
-            .Cast<Control>().Where(o => o != null).ToArray();
+
+        var scence = this.FindControl<Canvas>("Scene");
+        var objects = scence.Children.Cast<Control>().Where(o => o != null).ToArray();
+
+        var gameRecorder = new GameRecorder(objects);
+        var microphone = new MicrophoneSimulator("unencoded.raw", sampleRate: 44100);
+        var queue = new OggDataInput(microphone, gameRecorder);
+
+        // Start recording.
+        microphone.Start();
 
         // Start timer.
         bool inProcess = false;
@@ -79,19 +92,17 @@ public partial class MainWindow : Window
                 return;
             }
             inProcess = true;
-            writer.Reset();
 
-            for (int i = 0; i < objects.Length; i++)
+            lock (lo)
             {
-                var go = new GameObject
-                {
-                    Id = objects[i].Name,
-                    Left = objects[i].GetValue(Canvas.LeftProperty),
-                    Top = objects[i].GetValue(Canvas.TopProperty),
-                };
-                netPacketProcessor.WriteNetSerializable(writer, go);
+                gameRecorder.PollState();
+                var data = queue.Flush();
+                
+                writer.Reset();
+                writer.PutBytesWithLength(data);
             }
-            server.SendToAll(writer, DeliveryMethod.Unreliable);
+
+            server.SendToAll(writer, DeliveryMethod.ReliableOrdered);
             server.PollEvents();
             inProcess = false;
         });
@@ -127,21 +138,15 @@ public partial class MainWindow : Window
         var objects = this.FindControl<Canvas>("Scene").Children
             .Cast<Control>().Where(o => o != null).ToArray();
 
+        var player = new OggAudioPlayer(MicrophoneSimulator.VorbisStreamSerialNo, sampleRate: 44100);
+        var gameWriter = new GameWriter(GameRecorder.MetadataStreamSerialNo, objects);
+        var outputs = new OggDataOutput(gameWriter, player);
+
         // Events.
         bool inProcess = false;
-        netPacketProcessor.SubscribeReusable<GameObject, NetPeer>((go, netPeer) =>
-        {
-            var obj = objects.FirstOrDefault(o => o.Name == go.Id);
-            if (obj == null)
-            {
-                return;
-            }
-            obj.SetValue(Canvas.LeftProperty, go.Left);
-            obj.SetValue(Canvas.TopProperty, go.Top);
-        });
         listener.NetworkReceiveEvent += (fromPeer, dataReader, deliveryMethod) =>
         {
-            netPacketProcessor.ReadAllPackets(dataReader, fromPeer);
+            outputs.ReceiveBytes(dataReader.GetBytesWithLength());
         };
         listener.ConnectionRequestEvent += request =>
         {
@@ -164,6 +169,10 @@ public partial class MainWindow : Window
             client.PollEvents();
             inProcess = false;
         });
+
+        // Start background jobs.
+        //player.PlayPCMStatic("../../131815-pcm.raw");
+        player.PlayAsync();
         timer.Start();
 
         Title = "Client";
