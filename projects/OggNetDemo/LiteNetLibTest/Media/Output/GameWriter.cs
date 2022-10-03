@@ -1,14 +1,8 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Avalonia.Controls;
-using System.Xml.Linq;
-using LiteNetLibTest.Media.Input;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.IO;
-using System.Diagnostics;
 
 namespace LiteNetLibTest.Media.Output;
 

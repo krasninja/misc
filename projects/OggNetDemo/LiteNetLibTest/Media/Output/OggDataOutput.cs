@@ -33,7 +33,10 @@ internal class OggDataOutput
             if (outputs.TryGetValue(pageReader.StreamSerial, out var output))
             {
                 var isHandled = output.Enqueue(bytes, pageReader.GetPackets());
-                if (isHandled) handledStreams.Add(pageReader.StreamSerial);
+                if (isHandled)
+                {
+                    handledStreams.Add(pageReader.StreamSerial);
+                }
             }
         }
         pageReader.Release();

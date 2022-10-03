@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
@@ -16,7 +15,7 @@ public partial class MainWindow : Window
 {
     private const int Port = 12045;
     private const string ConnectionKey = "Test";
-    private readonly static object lo = new();
+    private static readonly object ObjLock = new();
 
     private readonly EventBasedNetListener listener = new();
     private NetManager? server;
@@ -93,7 +92,7 @@ public partial class MainWindow : Window
             }
             inProcess = true;
 
-            lock (lo)
+            lock (ObjLock)
             {
                 gameRecorder.PollState();
                 var data = queue.Flush();
